@@ -1,0 +1,20 @@
+.Inputfield:not(.InputfieldSubmit) {
+	margin: 1em 0;
+	border: 1px solid #ccc;
+	padding: 20px;
+}
+
+.InputfieldHeader {
+	font-weight: bold;
+}
+
+.Inputfield input[type=text],
+.Inputfield input[type=email] {
+	width: 100%;
+}
+
+.LoginRegisterError {
+	color: red;
+	font-weight: bold;
+}
+
