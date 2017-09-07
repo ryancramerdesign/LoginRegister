@@ -8,11 +8,12 @@
  *
  * CONFIGURATION PROPERTIES
  * ------------------------
- * @property bool $allowForgot Whether the ProcessForgotPassword module is installed.
- * @property bool $allowRegister Whether to allow user registration
  * @property bool $renderStyles Render <link> tags for stylesheets in output? 
  * @property bool $renderScripts Render <script> tags for JS files in output?
- * @property string $roleName Name of role to add to users created from register form.
+ * @property array $registerRoles Name of roles to add to users created from register form.
+ * @property array $registerFields Field names to show in registration form. 
+ * @property array $profileFields Field names to show in profile form. 
+ * @property array $features
  *
  * HOOKABLE METHODS
  * ----------------
@@ -49,13 +50,13 @@
  *
  */
 
-class LoginRegister extends WireData implements Module {
+class LoginRegister extends WireData implements Module, ConfigurableModule {
 
 	public static function getModuleInfo() {
 		return array(
 			'title' => 'Login/Register',
 			'summary' => 'Login or register for an account in ProcessWire',
-			'version' => 1,
+			'version' => 2,
 			'permission' => 'page-view',
 		);
 	}
@@ -67,11 +68,13 @@ class LoginRegister extends WireData implements Module {
 	 *
 	 */
 	public function __construct() {
-		$this->set('allowForgot', $this->modules->isInstalled('ProcessForgotPassword'));
-		$this->set('allowRegister', true);
 		$this->set('renderStyles', true);
 		$this->set('renderScripts', true);
-		$this->set('roleName', self::defaultRoleName);
+		$this->set('registerRoles', array(self::defaultRoleName));
+		$this->set('registerFields', array('name', 'email', 'pass'));
+		$this->set('profileFields', array('name', 'pass'));
+		$this->set('features', array('login', 'register', 'profile'));
+			
 		parent::__construct();
 	}
 
@@ -80,6 +83,7 @@ class LoginRegister extends WireData implements Module {
 	 * 
 	 */
 	public function init() {
+		if($this->wire('page')->template == 'admin') return;
 		
 		$markup = array(
 			'list' => "<div {attrs}>{out}</div>",
@@ -124,6 +128,118 @@ class LoginRegister extends WireData implements Module {
 	}
 
 	/**
+	 * Allow the requested feature? (login, register, profile, login-email, forgot)
+	 * 
+	 * @param string $name
+	 * @return bool
+	 * 
+	 */
+	public function allowFeature($name) {
+		$allow = in_array($name, $this->features); 
+		if($allow && $name == 'forgot') $allow = $this->wire('modules')->isInstalled('ProcessForgotPassword'); 
+		return $allow;
+	}
+	
+	/**
+	 * Allow the given email address to be used for registration or change-of-email?
+	 *
+	 * @param string $email
+	 * @return bool
+	 *
+	 */
+	protected function allowEmail($email) {
+		$email = $this->wire('sanitizer')->email($email);
+		if(empty($email)) return false;
+		$email = $this->wire('sanitizer')->selectorValue($email);
+		if(empty($email)) return false;
+		$u = $this->wire('users')->get("email=$email, include=all");
+		if($u && $u->id) return false;
+		return true;
+	}
+
+	/**
+	 * Allow the given user name?
+	 *
+	 * @param string $name
+	 * @param string $reason When not allowed, the reason is populated to this string.
+	 * @return bool
+	 *
+	 */
+	protected function allowName($name, &$reason) {
+
+		$disallowedNames = array(
+			'admin',
+			'administrator',
+			'superuser',
+			'root',
+			'user',
+			'guest',
+		);
+
+		$nameOriginal = $name;
+		$name = $this->wire('sanitizer')->pageName($name);
+		$allow = false;
+
+		if(strlen($name) < 3) {
+			$reason = $this->_('User name must be 3+ characters in length');
+		} else if($name !== $nameOriginal) {
+			$reason = $this->_('User name does not validate, please try another.');
+		} else {
+			$u = $this->wire('users')->get("include=all, name=$name");
+			if($u && $u->id) {
+				$reason = $this->_('User name is already in use, please try another.');
+			} else {
+				$allow = true;
+			}
+		}
+
+		if($allow) {
+			foreach($disallowedNames as $disallowedName) {
+				if(strpos($disallowedName, $name) !== false) {
+					$reason = $this->_('Username is not allowed, please try another.');
+					$allow = false;
+					break;
+				}
+			}
+		}
+
+		return $allow;
+	}
+
+
+	/**
+	 * Get role specified in name, optionally in "roleName:id" format
+	 * 
+	 * @param string $name
+	 * @return Role|NullPage
+	 * 
+	 */
+	protected function getRole($name) {
+		list($name, $id) = strpos($name, ':') ? explode(':', $name) : array($name, 0);
+		$role = $this->wire('roles')->get($name); 
+		if((!$role || !$role->id) && $id) $role = $this->wire('roles')->get((int) $id); 
+		return $role;
+	}
+
+	/**
+	 * Convert an email address to a user name
+	 * 
+	 * @param string $email
+	 * @return string
+	 * 
+	 */
+	protected function emailToName($email) { 
+		$name = $this->wire('sanitizer')->pageName($email, Sanitizer::translate);
+		$length = strlen($name); 
+		$maxLength = 100;
+		if($length > $maxLength) {
+			$n = $length - 100;
+			$name = substr($name, 0, $maxLength) . "-$n";
+		}
+		return $name;
+	}
+
+	/**
 	 * Main login flow control, handles all input/output for this module
 	 *
 	 * @return string
@@ -150,7 +266,7 @@ class LoginRegister extends WireData implements Module {
 				$session->logout();
 				$session->redirect($this->wire('page')->url() . '?logout=1');
 
-			} else if($input->get('profile')) {
+			} else if($input->get('profile') && $this->allowFeature('profile')) {
 				$profileForm = $this->buildProfileForm();
 				if($input->post('profile_submit')) {
 					$this->processProfileForm($profileForm); 
@@ -161,18 +277,18 @@ class LoginRegister extends WireData implements Module {
 				if($input->get('register_created')) {
 					$this->message($this->_('Thank you, your account is confirmed and you are now logged in'));
 				}
-				$this->message(sprintf($this->_('Welcome %s'), $user->name));
+				$this->message(sprintf($this->_('Welcome %s'), $this->allowFeature('login-email') ? $user->email : $user->name));
 			}
 			
 			$out .= $this->renderList($this->buildLoggedInLinks());
 
-		} else if($input->get('forgot') && $this->allowForgot) {
+		} else if($input->get('forgot') && $this->allowFeature('forgot')) {
 			// Forgot password
 			$process = $this->modules->get("ProcessForgotPassword");
 			/** @var ProcessForgotPassword $process */
 			$out = $process->execute();
 
-		} else if($input->get('register') && $this->allowRegister) {
+		} else if($input->get('register') && $this->allowFeature('register')) {
 			// Register
 			$registerForm = $this->buildRegisterForm();
 			if($input->post('register_submit')) {
@@ -186,7 +302,7 @@ class LoginRegister extends WireData implements Module {
 				$out = $this->renderRegisterForm($registerForm);
 			}
 
-		} else if($input->get('register_confirm') && $this->allowRegister) {
+		} else if($input->get('register_confirm') && $this->allowFeature('register')) {
 			// Register confirm
 			try {
 				if($this->processConfirmation()) {
@@ -206,7 +322,7 @@ class LoginRegister extends WireData implements Module {
 			$showLoginForm = true;
 		}
 
-		if($showLoginForm) {
+		if($showLoginForm && $this->allowFeature('login')) {
 			$loginForm = $this->buildLoginForm();
 			if($input->post('login_submit')) {
 				if($this->processLoginForm($loginForm)) {
@@ -228,7 +344,7 @@ class LoginRegister extends WireData implements Module {
 	protected function ___buildLoggedInLinks() {
 		$page = $this->wire('page');
 		$links = array();
-		if(!$this->wire('input')->get('profile')) {
+		if(!$this->wire('input')->get('profile') && $this->allowFeature('profile')) {
 			$links['profile'] = "<a href='$page->url?profile=1'>" . $this->_('Edit profile') . "</a>";
 		}
 		$links['logout'] = "<a href='$page->url?logout=1'>" . $this->_('Logout') . "</a>";
@@ -240,33 +356,53 @@ class LoginRegister extends WireData implements Module {
 	 * 
 	 * @param InputfieldForm $form
 	 * @return bool
+	 * @throws WireException on CSRF validation fail
 	 * 
 	 */
 	protected function ___processLoginForm(InputfieldForm $form) {
 
 		/** @var Session $session */
 		$session = $this->wire('session');
+	
+		/** @var Sanitizer $sanitizer */
+		$sanitizer = $this->wire('sanitizer');
 		
+		$session->CSRF->validate();
 		$form->processInput($this->wire('input')->post);
 		
-		$nameField = $form->getChildByName('login_name');
+		$nameIsEmail = $this->allowFeature('login-email');
 		$passField = $form->getChildByName('login_pass');
-
-		if($nameField->attr('value') && $passField->attr('value')) {
-			$name = $this->wire('sanitizer')->pageName($nameField->attr('value'));
-			$pass = substr($passField->attr('value'), 0, 128);
-			$user = $session->login($name, $pass);
-			if($user && $user->name === $name) {
-				// successful login
-				$this->loginSuccess($user);
-				$this->message(sprintf($this->_('Successful login for %s'), $user->name));
-				return true;
-			} else {
-				// login failed
-				$this->loginFail($name);
-				$this->error($name . " - " . $this->_("Login failed"));
-				$passField->attr('value', '');
+		$nameField = $form->getChildByName('login_name');
+		$name = $nameField->attr('value');
+		$pass = $passField->attr('value');
+		
+		if(!$name || !$pass) return false;
+	
+		$name = $nameIsEmail ? $this->emailToName($name) : $sanitizer->pageName($name); 
+		$pass = substr($pass, 0, 128);
+		$user = $session->login($name, $pass);
+		
+		if((!$user || $user->name !== $name) && $nameIsEmail) {
+			// login failed, but login by email is supported
+			// attempt login a second time by finding user with email address and using their name
+			$user = null;
+			$email = $sanitizer->selectorValue($nameField->attr('value')); 
+			$matches = $this->wire('users')->find("include=all, email=$email"); 
+			if($matches->count() === 1) {
+				$user = $session->login($matches->first()->name, $pass);
 			}
+		}
+		
+		if($user && $user->name === $name) {
+			// successful login
+			$this->loginSuccess($user);
+			$this->message(sprintf($this->_('Successful login for %s'), ($nameIsEmail ? $user->email : $user->name)));
+			return true;
+		} else {
+			// login failed
+			$this->loginFail($name);
+			$this->error($name . " - " . $this->_("Login failed"));
+			$passField->attr('value', '');
 		}
 		
 		return false;
@@ -286,11 +422,17 @@ class LoginRegister extends WireData implements Module {
 		$form->description = $this->_('Login'); 
 
 		/** @var InputfieldText $nameField */
-		$nameField = $this->modules->get('InputfieldText');
-		$nameField->set('label', $this->_('Username')); // Login form: username field label
+		if($this->allowFeature('login-email')) {
+			$nameField = $this->modules->get('InputfieldEmail');
+			$nameField->set('label', $this->_('Email')); // Login form: email field label
+		} else {
+			$nameField = $this->modules->get('InputfieldText');
+			$nameField->set('label', $this->_('Username')); // Login form: username field label
+		}
 		$nameField->attr('id+name', 'login_name');
 		$nameField->attr('class', $this->className() . 'Name');
 		$nameField->collapsed = Inputfield::collapsedNever;
+		$nameField->required = true; 
 		$form->add($nameField);
 
 		/** @var InputfieldText $passField */
@@ -300,12 +442,14 @@ class LoginRegister extends WireData implements Module {
 		$passField->attr('type', 'password');
 		$passField->attr('class', $this->className() . 'Pass');
 		$passField->collapsed = Inputfield::collapsedNever;
+		$passField->required = true; 
 		$form->add($passField);
 
 		/** @var InputfieldSubmit $submitField */
 		$submitField = $this->modules->get('InputfieldSubmit');
 		$submitField->attr('name', 'login_submit');
 		$submitField->attr('value', $this->_('Login')); // Login form: submit login button 
+		$submitField->appendMarkup = $this->wire('session')->CSRF->renderInput();
 		$form->add($submitField);
 
 		return $form;
@@ -333,11 +477,11 @@ class LoginRegister extends WireData implements Module {
 		$links = array();
 		$page = $this->wire('page');
 			
-		if($this->allowForgot) {
+		if($this->allowFeature('forgot')) {
 			$links['forgot'] = "<a href='$page->url?forgot=1'>" . $this->_("Forgot your password?") . "</a>"; 
 		}
 		
-		if($this->allowRegister) {
+		if($this->allowFeature('register')) {
 			$links['register']  = "<a href='./?register=1'>" . $this->_("Register for an account") . "</a>";
 		}
 		
@@ -359,34 +503,44 @@ class LoginRegister extends WireData implements Module {
 	 */
 	protected function ___buildRegisterForm() {
 		
+		$userTemplate = $this->wire('templates')->get('user');
+		$registerFields = $this->registerFields;
+		
 		/** @var InputfieldForm $form */
 		$form = $this->modules->get('InputfieldForm');
 		$form->attr('id', 'LoginRegisterForm');
 		$form->attr('method', 'post');
 		$form->attr('action', $this->wire('page')->url() . '?register=1'); 
 		$form->description = $this->_('Register for an account'); 
-	
-		/** @var InputfieldText $f */
-		$f = $this->modules->get('InputfieldText');
-		$f->attr('id+name', 'register_name');
-		$f->label = $this->_('Login name'); 
-		$f->description = $this->_('Use letters, numbers, hyphens or underscores. No spaces.');
-		$f->required = true;
-		$form->add($f);
-	
-		/** @var InputfieldPassword $f */
-		$f = $this->modules->get('InputfieldPassword'); 
-		$f->attr('id+name', 'register_pass'); 
-		$f->label = $this->_('Password');
-		$f->required = true;
-		$form->add($f); 
-	
-		/** @var InputfieldEmail $f */
-		$f = $this->modules->get('InputfieldEmail'); 
-		$f->attr('id+name', 'register_email'); 
-		$f->label = $this->_('Email address'); 
-		$f->required = true;
-		$form->add($f);
+
+		if(!$this->allowFeature('login-email')) {
+			/** @var InputfieldText $f */
+			$f = $this->modules->get('InputfieldText');
+			$f->attr('id+name', 'register_name');
+			$f->label = $this->_('Login name');
+			$f->description = $this->_('Use letters, numbers, hyphens or underscores. No spaces.');
+			$f->required = true;
+			$f->attr('required', 'required');
+			$form->add($f);
+		}
+		
+		if(!in_array('email', $registerFields)) $registerFields[] = 'email';
+		if(!in_array('pass', $registerFields)) $registerFields[] = 'pass';
+		$nullPage = new NullPage();
+		$this->wire($nullPage);
+
+		foreach($registerFields as $fieldName) {
+			if($fieldName == 'roles') continue;
+			$field = $userTemplate->fieldgroup->getFieldContext($fieldName);
+			if(!$field) continue;
+			$inputfield = $field->getInputfield($nullPage);
+			$inputfield->attr('id+name', 'register_' . $inputfield->attr('name'));
+			if($fieldName == 'email' || $fieldName == 'pass') $inputfield->required = true;
+			if($inputfield->required && $inputfield instanceof InputfieldText) {
+				$inputfield->attr('required', 'required');
+			}
+			$form->add($inputfield); 
+		}
 
 		// honeypot
 		/** @var InputfieldTextarea $f */
@@ -400,6 +554,7 @@ class LoginRegister extends WireData implements Module {
 		$f = $this->modules->get('InputfieldSubmit');
 		$f->attr('id+name', 'register_submit');
 		$f->attr('value', $this->_('Register'));
+		$f->appendMarkup = $this->wire('session')->CSRF->renderInput();
 		$form->add($f); 
 	
 		return $form;
@@ -421,72 +576,60 @@ class LoginRegister extends WireData implements Module {
 	 * 
 	 * @param InputfieldForm $form
 	 * @return bool
+	 * @throws WireException on CSRF validation fail
 	 * 
 	 */
 	protected function ___processRegisterForm(InputfieldForm $form) {
 		
-		$disallowedNames = array(
-			'admin',
-			'administrator',
-			'superuser',
-			'root',
-			'user',
-			'guest',
-		);
+		/** @var Session $session */
+		$session = $this->wire('session');
 	
 		/** @var Sanitizer $sanitizer */
 		$sanitizer = $this->wire('sanitizer');
-		
-		$form->processInput($this->wire('input')->post);
 	
+		$session->CSRF->validate();
+		$form->processInput($this->wire('input')->post);
+		
+		$emailInUseError = $this->_('Email address is already in use, please use another.');
+		
 		// check if honeypot is populated
 		$honeypotField = $form->getChildByName('register_comment');
 		$honeypot = $honeypotField->attr('value');
 		if(strlen($honeypot)) return false;
-	
-		// validate requested user name
-		$nameField = $form->getChildByName('register_name');
-		$name = $sanitizer->pageName($nameField->attr('value'));
-		if(strlen($name)) {
-			if(strlen($name) < 3) {
-				$nameField->error($this->_('User name must be 3+ characters in length'));
-			}
-			if($name !== $nameField->attr('value')) {
-				$nameField->error($this->_('User name does not validate, please try another.'));
-			} else {
-				$u = $this->wire('users')->get("name=$name");
-				if($u && $u->id) $nameField->error($this->_('User name is already in use, please try another.'));
-			}
-			foreach($disallowedNames as $disallowedName) {
-				if(strpos($disallowedName, $name) !== false) {
-					$nameField->error($this->_('Username is not allowed, please try another.'));
-				}
-			}
-		}
-	
+		
 		// get requested password
 		$passField = $form->getChildByName('register_pass');
-		$pass = $passField->attr('value'); 
-	
+		$pass = $passField->attr('value');
+
 		// validate email
 		$emailField = $form->getChildByName('register_email');
-		$email = strtolower($sanitizer->email($emailField->attr('value')));
-		if(strlen($email)) {
-			$u = $this->wire('users')->get('email=' . $sanitizer->selectorValue($email)); 	
-			if($u && $u->id) {
-				$emailField->error($this->_('Email address is already in use, please use another.'));
-			}
+		$email = $sanitizer->email($emailField->attr('value'));
+		if(strlen($email) && !$this->allowEmail($email)) {
+			$emailField->error($emailInUseError); 
+			$emailField->attr('value', '');
 		}
 
+		// validate requested user name
+		$error = '';
+		if($this->allowFeature('login-email')) {
+			$name = $this->emailToName($emailField->attr('value'));
+			if(!$this->allowName($name, $error)) $emailField->error($emailInUseError);
+		} else {
+			$nameField = $form->getChildByName('register_name');
+			$name = $nameField->attr('value');
+			if(!$this->allowName($name, $error)) $nameField->error($error);
+		}
+		
 		$errors = $form->getErrors();
 		
 		if(!count($errors) && $name && $pass && $email) {
 			// if there were no errors 
+			$session->setFor($this, 'register_name', $name); 
 			foreach($form->getAll() as $f) {
 				$name = $f->attr('name');
 				if($name == 'register_submit') continue;
 				if(strpos($name, 'register_') !== 0) continue;
-				$this->wire('session')->setFor($this, $name, $f->attr('value'));
+				$session->setFor($this, $name, $f->attr('value'));
 			}
 			$code = $this->createConfirmationCode();
 			$this->sendConfirmationEmail($email, $code); 
@@ -566,6 +709,7 @@ class LoginRegister extends WireData implements Module {
 		$f = $this->modules->get('InputfieldText');
 		$f->attr('id+name', 'register_confirm');
 		$f->label = $this->_('Confirmation code');
+		$f->attr('required', 'required');
 		$form->add($f);
 
 		/** @var InputfieldSubmit $f */
@@ -600,41 +744,41 @@ class LoginRegister extends WireData implements Module {
 		
 		$input = $this->wire('input');
 		$session = $this->wire('session');
-		$sanitizer = $this->wire('sanitizer');
 		$users = $this->wire('users');
 		$code = $input->get('register_confirm');
 		
 		if(empty($code)) return false;
-
+		
 		// validate that the code in the session is the same one present in the URL
 		if($session->getFor($this, 'confirm_code') !== $code) throw new WireException('Invalid confirmation code'); 
 	
 		// get all values previously stored in session 
 		$values = $session->getFor($this, '');
-		$values['register_name'] = $sanitizer->pageName($values['register_name']);
-		$values['register_email'] = $sanitizer->email($values['register_email']);
-	
-		// check if username is now in use
-		$u = $users->get("name=$values[register_name]"); 
-		if($u && $u->id) throw new WireException('User name already taken');
-	
-		// check if email is now in use
-		$u = $users->get("email=" . $sanitizer->selectorValue($values['register_email']));
-		if($u && $u->id) throw new WireException('Email address already taken');
 		
+		// check if email is now in use
+		if(!$this->allowEmail($values['register_email'])) {
+			throw new WireException('Email address already taken');
+		}
+		
+		$error = '';
+		if(!$this->allowName($values['register_name'], $error)) {
+			throw new WireException('Unable to complete registration - ' . $error); 
+		}
+
 		$user = $users->newUser();
-	
+		
 		// populate values to new user
 		foreach($values as $key => $value) {
 			if(strpos($key, 'register_') !== 0) continue;
 			$key = str_replace('register_', '', $key); 
 			if($key == 'roles') continue; // don't allow this, just in case
+			if($key != 'name' && !$user->template->fieldgroup->hasField($key)) continue;
 			$user->set($key, $value); 
 		}
 	
 		// add role to user if defined
-		if($this->roleName) {
-			$role = $this->wire('roles')->get($this->roleName); 
+		foreach($this->registerRoles as $roleName) {
+			$role = $this->getRole($roleName); 
 			if($role->id && !$role->hasPermission('page-edit')) {
 				$user->addRole($role);
 			}
@@ -667,7 +811,6 @@ class LoginRegister extends WireData implements Module {
 		} else {
 			throw new WireException('Unable to login created user: ' . $u->name); 
 		}
-		
 	}
 	
 	/**
@@ -681,6 +824,7 @@ class LoginRegister extends WireData implements Module {
 		$user = $this->wire('user');
 		$of = $user->of();
 		$user->of(false);
+		$userTemplate = $this->wire('templates')->get('user');
 
 		/** @var InputfieldForm $form */
 		$form = $this->modules->get('InputfieldForm');
@@ -689,23 +833,25 @@ class LoginRegister extends WireData implements Module {
 		$form->attr('action', $this->wire('page')->url() . '?profile=1');
 		$form->description = $this->_('Edit profile'); 
 		
-		/** @var InputfieldEmail $f */
-		$f = $this->modules->get('InputfieldEmail');
-		$f->attr('id+name', 'profile_email');
-		$f->label = $this->_('Email address');
-		$f->required = true;
-		$f->attr('value', $user->get('email'));
-		$form->add($f);
-
-		/** @var InputfieldPassword $f */
-		$f = $this->modules->get('InputfieldPassword');
-		$f->attr('id+name', 'profile_pass');
-		$f->label = $this->_('Change password');
-		$form->add($f);
-
+		$profileFields = $this->profileFields;
+		if(!in_array('email', $profileFields)) $profileFields[] = 'email';
+		if(!in_array('pass', $profileFields)) $profileFields[] = 'pass';
+		
+		foreach($profileFields as $fieldName) {
+			if($fieldName == 'roles') continue;
+			$field = $userTemplate->fieldgroup->getFieldContext($fieldName); 
+			if(!$field) continue;
+			$inputfield = $user->getInputfield($field); 
+			if(!$inputfield) continue;
+			if($fieldName == 'email') $inputfield->attr('required', 'required');
+			$inputfield->attr('name', 'profile_' . $inputfield->attr('name'));
+			$form->add($inputfield);
+		}
+		
 		/** @var InputfieldSubmit $f */
 		$f = $this->modules->get('InputfieldSubmit');
 		$f->attr('id+name', 'profile_submit');
+		$f->appendMarkup = $this->wire('session')->CSRF->renderInput();
 		$form->add($f);
 		
 		if($of) $user->of(true);
@@ -733,13 +879,17 @@ class LoginRegister extends WireData implements Module {
 	 */
 	protected function ___processProfileForm(InputfieldForm $form) {
 		
-		$form->processInput($this->wire('input')->post); 
-		//if(count($form->getErrors())) return false;
+		/** @var Session $session */
+		$session = $this->wire('session');
 	
 		/** @var User $user */
 		$user = $this->wire('user');
+		
 		/** @var Sanitizer $sanitizer */
 		$sanitizer = $this->wire('sanitizer');
+
+		$session->CSRF->validate();
+		$form->processInput($this->wire('input')->post); 
 		
 		$of = $user->of();
 		$user->of(false);
@@ -756,19 +906,29 @@ class LoginRegister extends WireData implements Module {
 	
 		// email
 		$emailField = $form->getChildByName('profile_email');
-		if($emailField->val() != $user->email) {
+		if(strtolower($emailField->val()) != strtolower($user->email)) {
 			$email = $sanitizer->email($emailField->val());
 			if(strlen($email)) {
-				// check if email is now in use
-				$u = $this->wire('users')->get("email=" . $sanitizer->selectorValue($email));
-				if($u && $u->id && $u->id != $user->id) {
+				if($this->allowEmail($email)) {
+					// email changed allowed
+					if($this->allowFeature('login-email')) {
+						// update name to be consistent with email
+						$name = $this->emailToName($email);
+						$reason = '';
+						if(!$this->allowName($name, $reason)) {
+							$emailField->error($this->_('Unable to change to new email address') . " ($reason)"); 
+							$emailField->val($user->email);
+							$email = '';
+						}
+					}
+					if(strlen($email)) {
+						$user->set('email', $email);
+						$this->message(sprintf($message, $emailField->label));
+					}
+				} else {
 					// email is in use
 					$emailField->error($this->_('Email address was already in use, so changed back to previous.'));
 					$emailField->val($user->email); 
-				} else if($u->id != $user->id && $email != $user->get('email')) {
-					// email is not in use
-					$user->set('email', $email);
-					$this->message(sprintf($message, $emailField->label)); 
 				}
 			}
 		}
@@ -928,6 +1088,78 @@ class LoginRegister extends WireData implements Module {
 			$role = $roles->add(self::defaultRoleName);
 			if($role->id) $this->message("Added role: $role->name");
 		}
+	}
+
+	/**
+	 * Module configuration
+	 * 
+	 * @param InputfieldWrapper $inputfields
+	 * 
+	 */
+	public function getModuleConfigInputfields(InputfieldWrapper $inputfields) {
+
+		$hasForgot = $this->modules->isInstalled('ProcessForgotPassword'); 
+		
+		/** @var InputfieldCheckboxes $f */
+		$f = $this->modules->get('InputfieldCheckboxes'); 
+		$f->attr('name', 'features'); 
+		$f->label = $this->_('Features to use'); 
+		$f->addOption('login', $this->_('Login form')); 
+		$f->addOption('register', $this->_('New user registration form')); 
+		$f->addOption('profile', $this->_('Edit profile form (for logged-in users)'));
+		$f->addOption('login-email', $this->_('Use email address for login rather than user name'));
+		$f->addOption('forgot', $this->_('Forgot password reset') . ($hasForgot ? '' : '*')); 
+		$f->attr('value', $this->features);
+		if(!$hasForgot) $f->notes = 
+			$this->_('*Requires core “ProcessForgotPassword” module') . ' - [' .
+			$this->_('Click to install') . '](./installConfirm?name=ProcessForgotPassword)';
+		$inputfields->add($f); 
+	
+		/** @var InputfieldAsmSelect $f */
+		$f = $this->modules->get('InputfieldAsmSelect'); 
+		$f->attr('name', 'registerFields'); 
+		$f->label = $this->_('Registration form fields'); 
+		$f->description = $this->_('If you do not see all the fields you need, add them to the “user” template first and then come back here.'); 
+		$f->showIf = 'features=register';
+		foreach($this->wire('templates')->get('user')->fieldgroup as $field) {
+			if($field->name == 'roles') continue;
+			$label = $field->getLabel();
+			if($field->name == 'email' || $field->name == 'pass') $label .= ' ' . $this->_('(required)'); 
+			$f->addOption($field->name, $label);
+		}
+		$f2 = clone $f;
+		$value = $this->registerFields;
+		if(!in_array('email', $value)) $value[] = 'email';
+		if(!in_array('pass', $value)) $value[] = 'pass';
+		$f->attr('value', $value); 
+		$inputfields->add($f);
+	
+		/** @var InputfieldAsmSelect $f2 */
+		$f2->attr('name', 'profileFields');
+		$f2->label = $this->_('Profile form fields');
+		$f2->showIf = 'features=profile';
+		$value = $this->profileFields;
+		if(!in_array('email', $value)) $value[] = 'email';
+		if(!in_array('pass', $value)) $value[] = 'pass';
+		$f2->attr('value', $value); 
+		$inputfields->add($f2);
+	
+		/** @var InputfieldCheckboxes $f */
+		$f = $this->modules->get('InputfieldCheckboxes'); 
+		$f->attr('name', 'registerRoles'); 
+		$f->label = $this->_('Roles to add to newly registered users'); 
+		$f->notes = $this->_('The “guest” role is assumed. Roles with page-edit permission are not shown.'); 
+		$f->showIf = 'features=register';
+		$value = array();
+		foreach($this->wire('roles') as $role) {
+			if($role->name == 'guest' || $role->name == 'superuser') continue; 
+			if($role->hasPermission('page-edit')) continue; 
+			$option = "$role->name:$role->id";
+			$f->addOption($option, $role->name); 
+			if(in_array($option, $this->registerRoles) || in_array($role->name, $this->registerRoles)) $value[] = $option;
+		}
+		$f->attr('value', $value); 
+		$inputfields->add($f); 
 	}
 	
 }
