@@ -1184,7 +1184,10 @@ class LoginRegister extends WireData implements Module, ConfigurableModule {
 				$this->_('Place the following where you want the login/register/profile output to go in your template file.') . ' ' . 
 				$this->_('It should ideally be placed in a main/bodycopy area.'); 
 			$f->value = '<pre><code>&lt;?php echo $modules->get("LoginRegister")->execute(); ?&gt;</code></pre>';
-			$f->notes = sprintf($this->_('See the [full documentation](%s) for more details.'), '#');
+			$f->notes = sprintf(
+				$this->_('See the [full documentation](%s) for more details.'), 
+				'https://github.com/ryancramerdesign/LoginRegister/blob/master/README.md'
+			);
 		}
 		$inputfields->add($f);
 		
