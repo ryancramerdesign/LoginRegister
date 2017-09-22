@@ -1,20 +1,49 @@
-.Inputfield:not(.InputfieldSubmit) {
-	margin: 1em 0;
-	border: 1px solid #ccc;
-	padding: 20px;
+.Inputfield {
+	clear: both;
+	box-sizing: border-box;
 }
-
+.Inputfield:not(.InputfieldSubmit) {
+	margin: 1% 0;
+	padding: 20px;
+	border: 1px solid #eee;
+	background: #eee;
+}
 .InputfieldHeader {
+	/* primary label */
 	font-weight: bold;
 }
-
 .Inputfield input[type=text],
 .Inputfield input[type=email] {
 	width: 100%;
 }
-
-.LoginRegisterError {
-	color: red;
-	font-weight: bold;
+.InputfieldColumnWidth {
+	/* columns that are not 100% width */
+	float: left;
+	clear: none;
 }
-
+.InputfieldColumnWidthFirst {
+	/* first column in a row of Inputfield columns */
+	clear: both;
+}
+.InputfieldColumnWidth:not(.InputfieldColumnWidthFirst) {
+	/* any column except first, in a row of Inputfield columns */
+	margin-left: 1%;
+}
+.InputfieldPassword input {
+	/* password input */
+	width: 50%;
+}
+.LoginRegisterMessage {
+	/* message notification */
+	color: green;
+	border: 1px solid green;
+	font-weight: bold;
+	padding: 10px 20px;
+}
+.LoginRegisterError {
+	/* error notification */
+	color: red;
+	border: 1px solid red;
+	font-weight: bold;
+	padding: 10px 20px;
+}

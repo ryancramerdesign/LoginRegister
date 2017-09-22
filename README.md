@@ -1,17 +1,43 @@
 # Login and Registration
 
-A module for ProcessWire 3.x that provides a self contained process that
-provides a login form, user registration, and profile editor. 
+A module for ProcessWire 3.x that provides a self contained process for 
+rendering and processing login, user registration, and profile edits. 
+New user registration requires the user’s email address for validation. 
 
-## Installation
+For those that have more than basic needs, this moduel also serves as a 
+good proof-of-concept for further development and integration. 
 
-Install the module as with any other module. After installation, either
-create a new template or use an existing template to use this module with.
-This module will provide the “content” or “body copy” area of your page,
-and that’s where you should use its output. Edit your template file and 
-place the following in it:
+## Installation and setup
 
-**Direct output:**
+### First steps
+
+Install the module as with any other module, by placing the included files
+in /site/modules/LoginRegister/, go to “Modules > Refresh” in your admin,
+and then click “install” for the this module. 
+
+### Configure
+
+You should now see a configuration screen for this module. This screen
+will let you determine what features you want to use with it, and what
+fields you want to allow for user registration and profile editing. 
+
+By default, the email and password fields are required for both forms. You
+may want to add more fields. To do this, you’ll need to add fields to 
+your “user” template. You can add fields to your user template in the admin
+by going to “Setup > Templates > Show system templates > user”. 
+
+You should stick to using simple text-based fields for now. File/image 
+fields, repeaters, rich text editors and combination fields fields are not 
+supported on the front-end at present. 
+
+### Output
+
+After installation and configuration, either create a new template or use 
+an existing template to use this module with. This module will provide the 
+“content” or “body copy” area of your page, and that’s where you should 
+use its output. Edit your template file and place the following in it:
+
+**Direct output or markup regions:**
 ~~~~~
 <?= $modules->get('LoginRegister')->execute() ?>
 ~~~~~
@@ -142,5 +168,39 @@ of hooks available, open the LoginRegister.module file and note all
 methods listed in the phpdoc block comment at the top. These are all 
 directly hookable. 
 
+One thing that may not be clear from looking at the LoginRegister.module
+file is that you might also find it useful to hook into specific Inputfield
+types to add classes or make other adjustments. In this example below, we
+add a hook to Inputfield objects before they are rendered, to add Uikit 3
+specific classes:
+
+~~~~~
+$wire->addHookBefore('Inputfield::render', function($event) {
+  $inputfield = $event->object;
+  
+  if($inputfield instanceof InputfieldTextarea) {
+    // textarea input
+    $inputfield->addClass('uk-textarea'); 
+    
+  } else if($inputfield instanceof InputfieldText) {
+    // includes most single-line text types 
+    $inputfield->addClass('uk-input');
+    
+  } else if($inputfield instanceof InputfieldSubmit) {
+    // submit button
+    $inputfield->addClass('uk-button uk-button-primary');
+  }
+}); 
+
+// render module output
+echo $modules->get('LoginRegister')->execute(); 
+~~~~~
+
+## License 
+
+This module uses the same license as ProcessWire 3.x, which is the
+Mozilla Public License version 2.0 (MPL 2.0). 
+
 --------
+
 Copyright 2017 by Ryan Cramer

@@ -57,7 +57,7 @@ class LoginRegister extends WireData implements Module, ConfigurableModule {
 			'title' => 'Login/Register',
 			'summary' => 'Login or register for an account in ProcessWire',
 			'version' => 2,
-			'permission' => 'page-view',
+			'icon' => 'user-plus',
 		);
 	}
 
@@ -388,8 +388,12 @@ class LoginRegister extends WireData implements Module, ConfigurableModule {
 			$user = null;
 			$email = $sanitizer->selectorValue($nameField->attr('value')); 
 			$matches = $this->wire('users')->find("include=all, email=$email"); 
-			if($matches->count() === 1) {
+			$qty = $matches->count();
+			if($qty === 1) {
 				$user = $session->login($matches->first()->name, $pass);
+				$name = $user->name;
+			} else if($qty > 1) {
+				$this->error($this->_('Cannot login because more than one account uses this email address.'));
 			}
 		}
 		
@@ -401,7 +405,7 @@ class LoginRegister extends WireData implements Module, ConfigurableModule {
 		} else {
 			// login failed
 			$this->loginFail($name);
-			$this->error($name . " - " . $this->_("Login failed"));
+			$this->error($this->_("Login failed"));
 			$passField->attr('value', '');
 		}
 		
@@ -1104,6 +1108,7 @@ class LoginRegister extends WireData implements Module, ConfigurableModule {
 		$f = $this->modules->get('InputfieldCheckboxes'); 
 		$f->attr('name', 'features'); 
 		$f->label = $this->_('Features to use'); 
+		$f->icon = 'sliders';
 		$f->addOption('login', $this->_('Login form')); 
 		$f->addOption('register', $this->_('New user registration form')); 
 		$f->addOption('profile', $this->_('Edit profile form (for logged-in users)'));
@@ -1119,8 +1124,11 @@ class LoginRegister extends WireData implements Module, ConfigurableModule {
 		$f = $this->modules->get('InputfieldAsmSelect'); 
 		$f->attr('name', 'registerFields'); 
 		$f->label = $this->_('Registration form fields'); 
-		$f->description = $this->_('If you do not see all the fields you need, add them to the “user” template first and then come back here.'); 
+		$f->description = 
+			$this->_('If you do not see all the fields you need, add them to the “user” template first and then come back here.') . ' ' . 
+			$this->_('Only standard fields may be used on the front-end (no files, repeaters, richtext, multi-value, combined fields, etc.).');
 		$f->showIf = 'features=register';
+		$f->icon = 'address-book-o';
 		foreach($this->wire('templates')->get('user')->fieldgroup as $field) {
 			if($field->name == 'roles') continue;
 			$label = $field->getLabel();
@@ -1138,6 +1146,7 @@ class LoginRegister extends WireData implements Module, ConfigurableModule {
 		$f2->attr('name', 'profileFields');
 		$f2->label = $this->_('Profile form fields');
 		$f2->showIf = 'features=profile';
+		$f2->icon = 'address-card-o';
 		$value = $this->profileFields;
 		if(!in_array('email', $value)) $value[] = 'email';
 		if(!in_array('pass', $value)) $value[] = 'pass';
@@ -1150,6 +1159,7 @@ class LoginRegister extends WireData implements Module, ConfigurableModule {
 		$f->label = $this->_('Roles to add to newly registered users'); 
 		$f->notes = $this->_('The “guest” role is assumed. Roles with page-edit permission are not shown.'); 
 		$f->showIf = 'features=register';
+		$f->icon = 'gears';
 		$value = array();
 		foreach($this->wire('roles') as $role) {
 			if($role->name == 'guest' || $role->name == 'superuser') continue; 
@@ -1160,6 +1170,24 @@ class LoginRegister extends WireData implements Module, ConfigurableModule {
 		}
 		$f->attr('value', $value); 
 		$inputfields->add($f); 
+	
+		/** @var InputfieldMarkup $f */
+		$f = $this->modules->get('InputfieldMarkup'); 
+		$f->attr('name', '_docs');
+		$f->label = $this->_('How to use + documentation'); 
+		$f->icon = 'bookmark-o';
+		$f->collapsed = Inputfield::collapsedYes;
+		if($this->wire('adminTheme') instanceof AdminThemeFramework) {
+			$f->value = $this->wire('sanitizer')->entitiesMarkdown(file_get_contents(__DIR__ . '/README.md'), true);
+		} else {
+			$f->description = 
+				$this->_('Place the following where you want the login/register/profile output to go in your template file.') . ' ' . 
+				$this->_('It should ideally be placed in a main/bodycopy area.'); 
+			$f->value = '<pre><code>&lt;?php echo $modules->get("LoginRegister")->execute(); ?&gt;</code></pre>';
+			$f->notes = sprintf($this->_('See the [full documentation](%s) for more details.'), '#');
+		}
+		$inputfields->add($f);
+		
 	}
 	
 }
