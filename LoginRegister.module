@@ -674,7 +674,7 @@ class LoginRegister extends WireData implements Module, ConfigurableModule {
 		$config = $this->wire('config');
 		$confirmURL = $this->wire('page')->httpUrl() . "?register_confirm=" . urlencode($confirmCode);
 		
-		$mail = new WireMail();
+		$mail = WireMail();
 		$mail->subject(sprintf($this->_('Confirm account at %s'), $config->httpHost)); 
 		$mail->to($email);
 		
