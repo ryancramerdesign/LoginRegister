@@ -265,13 +265,29 @@ class LoginRegister extends WireData implements Module, ConfigurableModule {
 				$this->message($this->_('You have logged out'));
 				$session->logout();
 				$session->redirect($this->wire('page')->url() . '?logout=1');
+			
+			} else if($input->get('email_confirm') && $input->get('profile') && $this->allowFeature('profile')) {
+				// New email confirm
+				try {
+					if($this->processNewEmailConfirmation()) {
+						// redirect to profile page
+						$session->redirect($page->url . '?profile=1');
+					}
+				} catch(\Exception $e) {
+					$this->error($this->_('Unable to complete email confirmation, please try again'));
+				}
 
 			} else if($input->get('profile') && $this->allowFeature('profile')) {
 				$profileForm = $this->buildProfileForm();
 				if($input->post('profile_submit')) {
-					$this->processProfileForm($profileForm); 
-				}
-				$out .= $this->renderProfileForm($profileForm); 
+					$this->processProfileForm($profileForm);
+					if ($session->confirmEmail) {
+						$confirmationForm = $this->buildConfirmationForm(true);
+						$code = $this->createConfirmationCode();
+						$this->sendConfirmationEmail($session->newEmail, $code, true); 
+						$out = $this->renderConfirmationForm($confirmationForm);
+					} else $out = $this->renderProfileForm($profileForm);
+				} else $out = $this->renderProfileForm($profileForm);
 
 			} else {
 				if($input->get('register_created')) {
@@ -669,18 +685,25 @@ class LoginRegister extends WireData implements Module, ConfigurableModule {
 	 * @return int 1 on success 0 on fail
 	 * 
 	 */
-	protected function sendConfirmationEmail($email, $confirmCode) {
+	protected function sendConfirmationEmail($email, $confirmCode, $emailOnly=false) {
 		
 		$config = $this->wire('config');
-		$confirmURL = $this->wire('page')->httpUrl() . "?register_confirm=" . urlencode($confirmCode);
-		
-		$mail = new WireMail();
-		$mail->subject(sprintf($this->_('Confirm account at %s'), $config->httpHost)); 
+		if ($emailOnly) {
+			$confirmURL = $this->wire('page')->httpUrl() . "?profile=1&email_confirm=" . urlencode($confirmCode);
+			$subject = sprintf($this->_('Confirm new email address at %s'), $config->httpHost);
+			$bodytext = sprintf($this->_('Please click the link below to confirm the new email address you entered to your profile at %s'), $config->httpHost);
+		} else {
+			$confirmURL = $this->wire('page')->httpUrl() . "?register_confirm=" . urlencode($confirmCode);
+			$subject = sprintf($this->_('Confirm account at %s'), $config->httpHost);
+			$bodytext = sprintf($this->_('Please click the link below to confirm the account you requested at %s'), $config->httpHost);
+		}
+
+		$mail = wireMail();
+		$mail->set("newline", "\n");
+		$mail->subject($subject); 
 		$mail->to($email);
 		
-		$body = "<p>" . sprintf(
-			$this->_('Please click the link below to confirm the account you requested at %s'), $config->httpHost
-		) . "</p>\n\n<p>" . $this->_('Confirmation code:') . " $confirmCode</p>";
+		$body = "<p>" . $bodytext . "</p>\n\n<p>" . $this->_('Confirmation code:') . " $confirmCode</p>";
 		
 		$mail->body(strip_tags($body) . "\n\n$confirmURL");
 		$mail->bodyHTML($body . "<p><a href='$confirmURL'>" . $this->_('Click to confirm') . "</a></p>"); 
@@ -697,21 +720,29 @@ class LoginRegister extends WireData implements Module, ConfigurableModule {
 	 * @return InputfieldForm
 	 * 
 	 */
-	protected function ___buildConfirmationForm() {
-		
+	protected function ___buildConfirmationForm($emailOnly=false) {
 		/** @var InputfieldForm $form */
 		$form = $this->modules->get('InputfieldForm');
 		$form->attr('id', 'LoginRegisterConfirmationForm'); 
 		$form->attr('method', 'get');
-		$form->attr('action', $this->wire('page')->url());
+		$emailOnly ?$form->attr('action', $this->wire('page')->url().'?profile=1') : $form->attr('action', $this->wire('page')->url());
 	
 		$form->description = 
 			$this->_('Thank you, a confirmation code has been emailed to you.') . ' ' .
 			$this->_('When you receive the email, click the link it contains, or paste the confirmation code below.');
 
-		/** @var InputfieldText $f */
+		if ($emailOnly) {
+			/** @var InputfieldHidden $f */
+			$f = $this->modules->get('InputfieldHidden');
+			$f->attr('id+name', 'profile');
+			$f->attr('value', '1');
+			$f->wrapAttr('style', 'display:none');
+			$form->add($f);
+		}
+		
+			/** @var InputfieldText $f */
 		$f = $this->modules->get('InputfieldText');
-		$f->attr('id+name', 'register_confirm');
+		$f->attr('id+name', $emailOnly ? 'email_confirm' : 'register_confirm');
 		$f->label = $this->_('Confirmation code');
 		$f->attr('required', 'required');
 		$form->add($f);
@@ -750,7 +781,7 @@ class LoginRegister extends WireData implements Module, ConfigurableModule {
 		$session = $this->wire('session');
 		$users = $this->wire('users');
 		$code = $input->get('register_confirm');
-		
+
 		if(empty($code)) return false;
 		
 		// validate that the code in the session is the same one present in the URL
@@ -814,6 +845,54 @@ class LoginRegister extends WireData implements Module, ConfigurableModule {
 			
 		} else {
 			throw new WireException('Unable to login created user: ' . $u->name); 
+		}
+	}
+
+	/**
+	 * Process the new email confirmation, set new email address and username
+	 * 
+	 * This can be triggered by a URL clicked in an email, or by submission of the confirmation form. 
+	 * 
+	 * @return bool False if no code is present in URL
+	 * @throws WireException Throws this exception for most error conditions
+	 * 
+	 */
+	protected function ___processNewEmailConfirmation() {
+		
+		$input = $this->wire('input');
+		$session = $this->wire('session');
+		$user = $this->user;
+		$code = $input->get('email_confirm');
+
+		if(empty($code)) return false;
+		
+		// validate that the code in the session is the same one present in the URL
+		if($session->getFor($this, 'confirm_code') !== $code) throw new WireException('Invalid confirmation code'); 
+
+		// check if email is now in use
+		if(!$this->allowEmail($session->newEmail)) {
+			throw new WireException('Email address already taken');
+		}
+
+		if($user->isLoggedin()) {
+			try {
+				$user->of(false);
+				$user->email = $session->newEmail;
+				// Change username if login with email is active.
+				// We have to, because user would not be able to change back to email address corresponding to their old username 
+				if ($session->newName) $user->name = $session->newName;
+				$user->save();
+				$this->message(sprintf($message, $emailField->label));;
+
+				// remove session data
+				$session->removeFor($this, true); 
+				
+				return true;
+			} catch(\Exception $e) {
+				throw new WireException('Unable to update email address');
+			}
+		} else {
+			return false;
 		}
 	}
 	
@@ -899,6 +978,10 @@ class LoginRegister extends WireData implements Module, ConfigurableModule {
 		$user->of(false);
 		$user->resetTrackChanges();
 		$message = $this->_('Updated: %s'); 
+		$session->confirmEmail = 0;
+		$session->newEmail = '';
+		$session->newName = '';
+		$name = '';
 	
 		// password
 		$passField = $form->getChildByName('profile_pass');	
@@ -925,9 +1008,13 @@ class LoginRegister extends WireData implements Module, ConfigurableModule {
 							$email = '';
 						}
 					}
-					if(strlen($email)) {
-						$user->set('email', $email);
-						$this->message(sprintf($message, $emailField->label));
+					if(strlen($email) && $email !== $user->email) {
+						$session->confirmEmail = true;
+						// $name is emailToName if login with email is allowed, else $name is empty
+						$session->newName = $name;
+						$session->newEmail = $email;
+						// leave old email till new is confirmed
+						$emailField->val($user->email);
 					}
 				} else {
 					// email is in use
