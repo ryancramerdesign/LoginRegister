@@ -366,47 +366,53 @@ class LoginRegister extends WireData implements Module, ConfigurableModule {
 	
 		/** @var Sanitizer $sanitizer */
 		$sanitizer = $this->wire('sanitizer');
+
+		try {
+
+			$session->CSRF->validate();
+			$form->processInput($this->wire('input')->post);
+			
+			$nameIsEmail = $this->allowFeature('login-email');
+			$passField = $form->getChildByName('login_pass');
+			$nameField = $form->getChildByName('login_name');
+			$name = $nameField->attr('value');
+			$pass = $passField->attr('value');
+			
+			if(!$name || !$pass) return false;
 		
-		$session->CSRF->validate();
-		$form->processInput($this->wire('input')->post);
-		
-		$nameIsEmail = $this->allowFeature('login-email');
-		$passField = $form->getChildByName('login_pass');
-		$nameField = $form->getChildByName('login_name');
-		$name = $nameField->attr('value');
-		$pass = $passField->attr('value');
-		
-		if(!$name || !$pass) return false;
-	
-		$name = $nameIsEmail ? $this->emailToName($name) : $sanitizer->pageName($name); 
-		$pass = substr($pass, 0, 128);
-		$user = $session->login($name, $pass);
-		
-		if((!$user || $user->name !== $name) && $nameIsEmail) {
-			// login failed, but login by email is supported
-			// attempt login a second time by finding user with email address and using their name
-			$user = null;
-			$email = $sanitizer->selectorValue($nameField->attr('value')); 
-			$matches = $this->wire('users')->find("include=all, email=$email"); 
-			$qty = $matches->count();
-			if($qty === 1) {
-				$user = $session->login($matches->first()->name, $pass);
-				$name = $user->name;
-			} else if($qty > 1) {
-				$this->error($this->_('Cannot login because more than one account uses this email address.'));
+			$name = $nameIsEmail ? $this->emailToName($name) : $sanitizer->pageName($name); 
+			$pass = substr($pass, 0, 128);
+			$user = $session->login($name, $pass);
+			
+			if((!$user || $user->name !== $name) && $nameIsEmail) {
+				// login failed, but login by email is supported
+				// attempt login a second time by finding user with email address and using their name
+				$user = null;
+				$email = $sanitizer->selectorValue($nameField->attr('value')); 
+				$matches = $this->wire('users')->find("include=all, email=$email"); 
+				$qty = $matches->count();
+				if($qty === 1) {
+					$user = $session->login($matches->first()->name, $pass);
+					$name = $user->name;
+				} else if($qty > 1) {
+					$this->error($this->_('Cannot login because more than one account uses this email address.'));
+				}
 			}
-		}
-		
-		if($user && $user->name === $name) {
-			// successful login
-			$this->loginSuccess($user);
-			$this->message(sprintf($this->_('Successful login for %s'), ($nameIsEmail ? $user->email : $user->name)));
-			return true;
-		} else {
-			// login failed
-			$this->loginFail($name);
-			$this->error($this->_("Login failed"));
-			$passField->attr('value', '');
+			
+			if($user && $user->name === $name) {
+				// successful login
+				$this->loginSuccess($user);
+				$this->message(sprintf($this->_('Successful login for %s'), ($nameIsEmail ? $user->email : $user->name)));
+				return true;
+			} else {
+				// login failed
+				$this->loginFail($name);
+				$this->error($this->_("Login failed"));
+				$passField->attr('value', '');
+			}
+
+		} catch(WireException $e) {
+			$this->error($e->getMessage());
 		}
 		
 		return false;
