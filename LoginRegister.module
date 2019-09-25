@@ -848,7 +848,7 @@ class LoginRegister extends WireData implements Module, ConfigurableModule {
 			$inputfield = $user->getInputfield($field); 
 			if(!$inputfield) continue;
 			if($fieldName == 'email') $inputfield->attr('required', 'required');
-			$inputfield->attr('name', 'profile_' . $inputfield->attr('name'));
+			$inputfield->attr('id+name', 'profile_' . $inputfield->attr('name'));
 			$form->add($inputfield);
 		}
 		
