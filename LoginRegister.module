@@ -14,6 +14,7 @@
  * @property array $registerFields Field names to show in registration form. 
  * @property array $profileFields Field names to show in profile form. 
  * @property array $features
+ * @property string $emailFrom Send emails from this address
  *
  * HOOKABLE METHODS
  * ----------------
@@ -74,6 +75,7 @@ class LoginRegister extends WireData implements Module, ConfigurableModule {
 		$this->set('registerFields', array('name', 'email', 'pass'));
 		$this->set('profileFields', array('name', 'pass'));
 		$this->set('features', array('login', 'register', 'profile'));
+		$this->set('emailFrom', '');
 			
 		parent::__construct();
 	}
@@ -237,6 +239,19 @@ class LoginRegister extends WireData implements Module, ConfigurableModule {
 			$name = substr($name, 0, $maxLength) . "-$n";
 		}
 		return $name;
+	}
+	
+	/**
+	 * Get address to send emails from
+	 * 
+	 * @return string
+	 * 
+	 */
+	protected function getEmailFrom() {
+		$emailFrom = $this->emailFrom;
+		if(empty($emailFrom)) $emailFrom = $this->wire('config')->adminEmail;
+		if(empty($emailFrom)) $emailFrom = 'noreply@' . $this->wire('config')->httpHost;
+		return $emailFrom;
 	}
 
 	/**
@@ -675,6 +690,7 @@ class LoginRegister extends WireData implements Module, ConfigurableModule {
 		$confirmURL = $this->wire('page')->httpUrl() . "?register_confirm=" . urlencode($confirmCode);
 		
 		$mail = new WireMail();
+		$mail->from = $this->getEmailFrom();
 		$mail->subject(sprintf($this->_('Confirm account at %s'), $config->httpHost)); 
 		$mail->to($email);
 		
@@ -1103,6 +1119,13 @@ class LoginRegister extends WireData implements Module, ConfigurableModule {
 	public function getModuleConfigInputfields(InputfieldWrapper $inputfields) {
 
 		$hasForgot = $this->modules->isInstalled('ProcessForgotPassword'); 
+		
+		/** @var InputfieldEmail $f */
+		$f = $this->wire('modules')->get('InputfieldEmail'); 
+		$f->attr('name', 'emailFrom');
+		$f->label = $this->_('Email address to send messages from'); 
+		$f->attr('value', $this->emailFrom); 
+		$inputfields->add($f);
 		
 		/** @var InputfieldCheckboxes $f */
 		$f = $this->modules->get('InputfieldCheckboxes'); 
